@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com.gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 )
@@ -34,7 +34,7 @@ func (c *codeAuthenticator) Code(ctx context.Context, sentCode *tg.AuthSentCode)
 }
 
 // UploadHandler handles video upload requests
-func UploadHandler(client *telegram.Client, ctx context.Context) http.HandlerFunc {
+func UploadHandler(client *telegram.Client, ctx context.Context, botChatID int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		file, handler, err := r.FormFile("video")
 		if err != nil {
@@ -75,64 +75,13 @@ func UploadHandler(client *telegram.Client, ctx context.Context) http.HandlerFun
 
 		log.Println("Video uploaded to Telegram")
 
-		// Send the video to the bot to get file_id
-		botUsername := "AdventureBot" // Replace with your bot's username
-		botUser, err := client.API().ContactsResolveUsername(ctx, botUsername)
-		if err != nil {
-			http.Error(w, "Failed to resolve bot username", http.StatusInternalServerError)
-			log.Printf("Failed to resolve bot username: %v", err)
-			return
-		}
-
-		peer := &tg.InputPeerUser{UserID: botUser.Users[0].(*tg.User).ID}
-
-		msg, err := client.API().MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
-			Peer: peer,
-			Media: &tg.InputMediaUploadedDocument{
-				File:     video,
-				MimeType: "video/mp4",
-				Attributes: []tg.DocumentAttributeClass{
-					&tg.DocumentAttributeVideo{
-						RoundMessage:      false,
-						SupportsStreaming: true,
-					},
-				},
-				ForceFile: false,
-			},
-			Message:  "Получите видео!",
-			RandomID: rand.Int63(),
-		})
+		// Send video to bot and get file_id
+		fileID, err := sendVideoToBot(client, ctx, video, botChatID)
 		if err != nil {
 			http.Error(w, "Failed to send video to bot", http.StatusInternalServerError)
 			log.Printf("Failed to send video to bot: %v", err)
 			return
 		}
-
-		log.Println("Video sent to bot")
-
-		// Extract file_id from the response
-		var fileID int64
-		updates, ok := msg.(*tg.Updates)
-		if !ok {
-			http.Error(w, "Invalid message format", http.StatusInternalServerError)
-			log.Printf("Invalid message format: %v", msg)
-			return
-		}
-		for _, update := range updates.Updates {
-			if upd, ok := update.(*tg.UpdateNewMessage); ok {
-				// Ensure Message is of the correct type
-				if msg, ok := upd.Message.(*tg.Message); ok {
-					if media, ok := msg.Media.(*tg.MessageMediaDocument); ok {
-						if doc, ok := media.Document.(*tg.Document); ok {
-							fileID = doc.ID
-							break
-						}
-					}
-				}
-			}
-		}
-
-		log.Printf("File ID: %d", fileID)
 
 		// Send file_id to bot server
 		if err := sendFileIDToBotServer(fileID); err != nil {
@@ -143,15 +92,63 @@ func UploadHandler(client *telegram.Client, ctx context.Context) http.HandlerFun
 
 		// Respond with the file_id
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int64{"file_id": fileID})
+		json.NewEncoder(w).Encode(map[string]string{"file_id": fileID})
 	}
+}
+
+func sendVideoToBot(client *telegram.Client, ctx context.Context, video tg.InputFileClass, botChatID int64) (string, error) {
+	peer := &tg.InputPeerUser{UserID: botChatID}
+
+	msg, err := client.API().MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+		Peer: peer,
+		Media: &tg.InputMediaUploadedDocument{
+			File:     video,
+			MimeType: "video/mp4",
+			Attributes: []tg.DocumentAttributeClass{
+				&tg.DocumentAttributeVideo{
+					RoundMessage:      false,
+					SupportsStreaming: true,
+				},
+			},
+			ForceFile: false,
+		},
+		Message:  "Получите видео!",
+		RandomID: rand.Int63(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to send video to bot: %w", err)
+	}
+
+	// Extract file_id from the response
+	var fileID string
+	updates, ok := msg.(*tg.Updates)
+	if !ok {
+		return "", fmt.Errorf("invalid message format: %v", msg)
+	}
+	for _, update := range updates.Updates {
+		if upd, ok := update.(*tg.UpdateNewMessage); ok {
+			// Ensure Message is of the correct type
+			if msg, ok := upd.Message.(*tg.Message); ok {
+				if media, ok := msg.Media.(*tg.MessageMediaDocument); ok {
+					if doc, ok := media.Document.(*tg.Document); ok {
+						fileID = fmt.Sprintf("%d", doc.ID)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("File ID: %s", fileID)
+	return fileID, nil
 }
 
 func main() {
 	// Replace with your api_id and api_hash
-	apiID :=                              // Replace with your api_id
+	apiID :=                            // Replace with your api_id
 	apiHash := "" // Replace with your api_hash
-	telegramPhone := ""               // Replace with your phone number
+	telegramPhone := "79232794418"                // Replace with your phone number
+	botChatID := int64()                // Replace with your bot's chat ID
 
 	client := telegram.NewClient(apiID, apiHash, telegram.Options{})
 	ctx := context.Background()
@@ -167,7 +164,7 @@ func main() {
 		}
 
 		// Set up HTTP server to receive video files
-		http.HandleFunc("/upload", UploadHandler(client, ctx))
+		http.HandleFunc("/upload", UploadHandler(client, ctx, botChatID))
 		fmt.Println("Listening on :8081 for video uploads...")
 		if err := http.ListenAndServe(":8081", nil); err != nil {
 			return fmt.Errorf("failed to start HTTP server: %w", err)
@@ -182,10 +179,10 @@ func main() {
 }
 
 // sendFileIDToBotServer sends the file_id to the bot's server
-func sendFileIDToBotServer(fileID int64) error {
+func sendFileIDToBotServer(fileID string) error {
 	botServerURL := "http://localhost:8080/upload" // URL бота-сервера
 
-	data := map[string]int64{"file_id": fileID}
+	data := map[string]string{"file_id": fileID}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("не удалось маршалировать данные: %w", err)
@@ -198,7 +195,8 @@ func sendFileIDToBotServer(fileID int64) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ошибка HTTP ответа: статус %s", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ошибка HTTP ответа: статус %s, тело %s", resp.Status, body)
 	}
 
 	return nil

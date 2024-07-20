@@ -57,6 +57,8 @@ func main() {
 	// Process each update
 	for update := range updates {
 		if update.Message != nil {
+			log.Printf("Received message: %s", update.Message.Text)
+
 			// Check if the message is a command
 			if update.Message.IsCommand() {
 				switch update.Message.Command() {
@@ -86,5 +88,7 @@ func sendVideoByFileID(bot *tgbotapi.BotAPI, chatID int64, fileID string) {
 	_, err := bot.Send(msg)
 	if err != nil {
 		log.Printf("Failed to send video: %v", err)
+	} else {
+		log.Printf("Video sent successfully to chat ID: %s", chatIDStr)
 	}
 }
