@@ -147,7 +147,7 @@ func main() {
 	// Replace with your api_id and api_hash
 	apiID :=                            // Replace with your api_id
 	apiHash := "" // Replace with your api_hash
-	telegramPhone := "79232794418"                // Replace with your phone number
+	telegramPhone := ""                // Replace with your phone number
 	botChatID := int64()                // Replace with your bot's chat ID
 
 	client := telegram.NewClient(apiID, apiHash, telegram.Options{})
